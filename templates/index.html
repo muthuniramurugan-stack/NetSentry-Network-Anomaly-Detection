@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NetSentry | Network Anomaly Detection</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">N</span><div><b>NETSENTRY</b><small>NETWORK SECURITY ANALYTICS</small></div></div>
+  <span class="status"><i></i> LOCAL ANALYSIS</span>
+</header>
+<main class="container">
+  <section class="hero">
+    <div class="eyebrow">DEFENSIVE NETWORK MONITORING</div>
+    <h1>Network Traffic <span>Anomaly Detection</span></h1>
+    <p>Upload a network capture and click Scan & Detect. NetSentry immediately inspects packets and reports suspicious traffic patterns.</p>
+  </section>
+
+
+  <section class="panel live-panel">
+    <div class="eyebrow">LOCAL AGENT SCAN</div>
+    <h2>Scan your laptop's network</h2>
+    <p class="muted">Start the NetSentry Agent on your laptop, then request a scan here. The cloud website sends the job to your agent; your laptop captures packets and returns results.</p>
+    <form action="{{ url_for('create_scan') }}" method="post" class="scan-form">
+      <label>Capture duration
+        <select name="duration"><option value="10">10 seconds</option><option value="20" selected>20 seconds</option><option value="30">30 seconds</option><option value="60">60 seconds</option></select>
+      </label>
+      <button type="submit">Scan my network</button>
+    </form>
+    {% if cloud_job %}
+    <div class="job-box" data-job-id="{{ cloud_job.id }}">
+      <b>Scan status: <span id="job-status">{{ cloud_job.status|upper }}</span></b>
+      <p id="job-message">{{ cloud_job.message }}</p>
+      <div id="job-result"></div>
+    </div>
+    <script>
+    (function(){
+      const box=document.querySelector('.job-box'); if(!box)return;
+      const id=box.dataset.jobId;
+      async function poll(){
+        try{
+          const r=await fetch('/api/scan/status/'+id); const j=await r.json();
+          document.getElementById('job-status').textContent=(j.status||'').toUpperCase();
+          document.getElementById('job-message').textContent=j.message||'';
+          if(j.status==='complete' && j.result){
+            const x=j.result;
+            document.getElementById('job-result').innerHTML =
+              '<div class="agent-result"><div><small>PACKETS</small><strong>'+x.total_packets+'</strong></div><div><small>SOURCES</small><strong>'+x.unique_sources+'</strong></div><div><small>DESTINATIONS</small><strong>'+x.unique_destinations+'</strong></div><div><small>ALERTS</small><strong>'+x.alert_count+'</strong></div></div>'+
+              '<h3>Detection alerts</h3>'+(x.alerts||[]).map(a=>'<div class="alert-item"><span class="severity '+String(a.severity).toLowerCase()+'">'+a.severity+'</span><div><b>'+a.title+'</b><p>'+a.details+'</p><small>Source: '+a.source+'</small></div></div>').join('')+
+              '<h3>Protocols</h3>'+Object.entries(x.protocols||{}).map(([k,v])=>'<div class="list-row"><span>'+k+'</span><b>'+v+'</b></div>').join('');
+            return;
+          }
+          if(j.status==='error'){return;}
+          setTimeout(poll,2500);
+        }catch(e){setTimeout(poll,5000);}
+      }
+      poll();
+    })();
+    </script>
+    {% endif %}
+  </section>
+
+  <section class="panel upload-panel">
+    <div><h2>Analyze an existing packet capture</h2><p>Choose a .pcap or .pcapng file exported from Wireshark. Each scan runs packet analysis automatically on the uploaded capture.</p></div>
+    <form action="{{ url_for('analyze') }}" method="post" enctype="multipart/form-data">
+      <input type="file" name="pcap_file" accept=".pcap,.pcapng" required>
+      <button type="submit">Scan &amp; Detect <span>→</span></button>
+    </form>
+    <a class="demo-link" href="{{ url_for('demo') }}">Preview illustrative demo results</a>
+  </section>
+
+
+  <div class="hosting-note">
+    <b>How website scanning works:</b> Render runs in the cloud and cannot directly capture packets from your personal laptop Wi-Fi adapter.
+    Upload a PCAP/PCAPNG capture from your device; clicking <b>Scan &amp; Detect</b> automatically analyzes that file and displays detections.
+    To capture your own laptop traffic, use Wireshark locally and save the capture first.
+  </div>
+\n  {% with messages = get_flashed_messages() %}{% if messages %}
+    <div class="flash">{% for message in messages %}{{ message }}{% endfor %}</div>
+  {% endif %}{% endwith %}
+
+  {% if result %}
+  <section class="section-heading"><div><div class="eyebrow">ANALYSIS OVERVIEW</div><h2>Capture summary</h2>{% if result.capture_name %}<p class="capture-name">Analyzed file: {{ result.capture_name }}</p>{% endif %}</div>{% if result.demo %}<span class="demo-badge">ILLUSTRATIVE DEMO</span>{% endif %}</section>
+  <section class="stats">
+    <article class="stat"><small>TOTAL PACKETS</small><strong>{{ "{:,}".format(result.total_packets) }}</strong><span>Frames analyzed</span></article>
+    <article class="stat"><small>UNIQUE SOURCES</small><strong>{{ result.unique_sources }}</strong><span>Source IP addresses</span></article>
+    <article class="stat"><small>DESTINATIONS</small><strong>{{ result.unique_destinations }}</strong><span>Destination IP addresses</span></article>
+    <article class="stat alert-stat"><small>ALERTS RAISED</small><strong>{{ result.alert_count }}</strong><span>Patterns to investigate</span></article>
+  </section>
+
+  <section class="grid two">
+    <article class="panel"><h3>Protocol distribution</h3>
+      {% for name, count in result.protocols.items() %}
+      <div class="bar-row"><div><span>{{ name }}</span><b>{{ count }}</b></div><div class="bar"><i style="width: {{ (count / (result.total_packets or 1) * 100)|round(1) }}%"></i></div></div>
+      {% else %}<p class="muted">No protocol data.</p>{% endfor %}
+    </article>
+    <article class="panel"><h3>Top destination ports</h3>
+      {% for port, count in result.top_ports %}<div class="list-row"><span>Port {{ port }}</span><b>{{ count }} packets</b></div>{% else %}<p class="muted">No TCP/UDP ports found.</p>{% endfor %}
+    </article>
+  </section>
+  <section class="grid two">
+    <article class="panel"><h3>Top source addresses</h3>
+      {% for ip, count in result.top_sources %}<div class="list-row"><code>{{ ip }}</code><b>{{ count }}</b></div>{% else %}<p class="muted">No source IP data.</p>{% endfor %}
+    </article>
+    <article class="panel"><h3>Top destination addresses</h3>
+      {% for ip, count in result.top_destinations %}<div class="list-row"><code>{{ ip }}</code><b>{{ count }}</b></div>{% else %}<p class="muted">No destination IP data.</p>{% endfor %}
+    </article>
+  </section>
+  <section class="panel alerts-panel">
+    <div class="panel-title"><div><div class="eyebrow">DETECTION ENGINE</div><h2>Security observations</h2></div><span class="count">{{ result.alert_count }} alerts</span></div>
+    {% for alert in result.alerts %}
+    <div class="alert-item"><span class="severity {{ alert.severity|lower }}">{{ alert.severity }}</span><div><b>{{ alert.title }}</b><p>{{ alert.details }}</p><small>Source: <code>{{ alert.source }}</code></small></div></div>
+    {% else %}<div class="empty">No configured anomaly thresholds were crossed in this capture.</div>{% endfor %}
+    <p class="disclaimer">Alerts are heuristic indicators, not proof of an attack. Verify each observation in Wireshark and with network context.</p>
+  </section>
+  {% endif %}
+  <footer>NETSENTRY • EDUCATIONAL SECURITY PROJECT • Analyze only authorized traffic.</footer>
+</main>
+</body></html>
